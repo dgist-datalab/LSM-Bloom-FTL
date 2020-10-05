@@ -2,6 +2,10 @@
 #define __LSM_SIMULATION_H__
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+#include "iteration.h"
 #include "lsm_params_module.h"
 #include "ssd.h"
 
@@ -48,12 +52,61 @@ typedef struct LSM{
 
 #define run_free(r) \
 	do{\
-		free(r->array);\
+		free((r)->array);\
 	}while(0)
 
+
+
+static inline void block_init(block *b, uint32_t max=PAGEPERBLOCK){
+	b->now=0;
+	b->max=max*L2PGAP;
+	memset(b->array, 0, sizeof(b->array));
+}
+
+static inline void run_init(run *r, uint32_t blocknum){
+	r->now=0;
+	r->max=blocknum;
+	r->array=(block*)malloc(sizeof(block)* blocknum);
+	for(uint32_t i=0; i<r->max; i++){
+		block_init(&r->array[i]);
+	}
+}
+
+static inline void level_init(level *lev, uint32_t idx, LSM *lsm){
+	lev->now=0;
+	lev->max=lsm->sizefactor;
+	lev->array=(run*)malloc(sizeof(run)*lev->max);
+	/*
+	if(idx>2){
+		static int i=0;
+		printf("%d - target_block_nunm %lf X %u blocksize:%u\n",i++,pow(lsm->sizefactor, idx-1), lev->max, sizeof(block));
+	}*/
+	for(uint32_t i=0; i<lev->max; i++){
+		run_init(&lev->array[i], pow(lsm->sizefactor, idx-1));
+	}
+}
+
+static inline void *run_get_value_from_idx(void *r, uint32_t idx){
+	run *tr=(run*)r;
+	if(idx>=tr->now * LPPB) return NULL;
+	uint32_t block_n=idx/LPPB;
+	uint32_t offset=idx%LPPB;
+	uint32_t * target=&tr->array[block_n].array[offset];
+	if(*target==0) return NULL;
+	else return target;
+}
+
+static inline bool check_done(bool *a, uint32_t idx){
+	for(uint32_t i=0; i<idx; i++){
+		if(!a[i]) return false;
+	}
+	return true;
+}
 
 LSM* lsm_init(char t, uint32_t level, uint32_t size_factor, uint32_t blocknum);
 int lsm_insert(LSM*, uint32_t lba);
 void lsm_print_level(LSM *, uint32_t target_level);
+void lsm_last_compaction(LSM*, level *, uint32_t idx);
+run lsm_level_to_run(LSM *lsm, level *lev, uint32_t idx, iter**, uint32_t iter_num, uint32_t target_run_size);
 void lsm_free(LSM *lsm);
 #endif

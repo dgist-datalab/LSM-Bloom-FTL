@@ -4,34 +4,14 @@
 #include "lsm_simulation.h"
 #include "iteration.h"
 using namespace std;
-
-static inline void block_init(block *b, uint32_t max=PAGEPERBLOCK){
-	b->now=0;
-	b->max=max*L2PGAP;
-	memset(b->array, 0, sizeof(b->array));
-}
-
-static inline void run_init(run *r, uint32_t blocknum){
-	r->now=0;
-	r->max=blocknum;
-	r->array=(block*)malloc(sizeof(block)* blocknum);
-	for(uint32_t i=0; i<r->max; i++){
-		block_init(&r->array[i]);
-	}
-}
-
-static inline void level_init(level *lev, uint32_t idx, LSM *lsm){
-	lev->now=0;
-	lev->max=lsm->sizefactor;
-	lev->array=(run*)malloc(sizeof(run)*lev->max);
-	/*
-	if(idx>2){
-		static int i=0;
-		printf("%d - target_block_nunm %lf X %u blocksize:%u\n",i++,pow(lsm->sizefactor, idx-1), lev->max, sizeof(block));
-	}*/
-	for(uint32_t i=0; i<lev->max; i++){
-		run_init(&lev->array[i], pow(lsm->sizefactor, idx-1));
-	}
+extern uint32_t write_cnt;
+extern uint32_t last_compaction_cnt;
+static inline void run_insert_value(run *r, uint32_t lba, uint32_t idx){
+	uint32_t block_n=idx/LPPB;
+	uint32_t offset=idx%LPPB;
+	r->array[block_n].array[offset]=lba;
+	r->array[block_n].now++;
+	write_cnt++;
 }
 
 LSM* lsm_init(char t, uint32_t level_num, uint32_t size_factor, uint32_t blocknum){
@@ -59,49 +39,16 @@ LSM* lsm_init(char t, uint32_t level_num, uint32_t size_factor, uint32_t blocknu
 	return lsm;
 }
 
-void *run_get_value_from_idx(void *r, uint32_t idx){
-	run *tr=(run*)r;
-	if(idx>=tr->now * LPPB) return NULL;
-	uint32_t block_n=idx/LPPB;
-	uint32_t offset=idx%LPPB;
-	uint32_t * target=&tr->array[block_n].array[offset];
-	if(*target==0) return NULL;
-	else return target;
-}
-
-static inline bool check_done(bool *a, uint32_t idx){
-	for(uint32_t i=0; i<idx; i++){
-		if(!a[i]) return false;
-	}
-	return true;
-}
-
-static inline void run_insert_value(run *r, uint32_t lba, uint32_t idx){
-	uint32_t block_n=idx/LPPB;
-	uint32_t offset=idx%LPPB;
-	r->array[block_n].array[offset]=lba;
-	r->array[block_n].now++;
-}
-
-void lsm_compaction(LSM *lsm, uint32_t idx){
-	//static int cnt=0;
-	//fprintf(stderr,"compaction cnt:%d %d\n", cnt++, idx);
+run lsm_level_to_run(LSM *lsm, level *lev, uint32_t idx, iter **iter_set, uint32_t iter_num, uint32_t target_run_size){
 	run new_run;
-	run_init(&new_run, pow(lsm->sizefactor, idx+1));
-	run *t=&lsm->array[idx+1].array[lsm->array[idx+1].now];
-	run_free(t);
+	run_init(&new_run, target_run_size?target_run_size:pow(lsm->sizefactor, idx+1));
 
-	iter **iter_set=(iter**)malloc(sizeof(iter*) * lsm->sizefactor);
-	for(uint32_t i=0; i<lsm->sizefactor; i++){
-		iter_set[i]=iter_init(0, lsm->array[idx].array[i].now, &lsm->array[idx].array[i], run_get_value_from_idx);
-	}
-
-	bool *empty=(bool*)calloc(lsm->sizefactor, sizeof(bool));
+	bool *empty=(bool*)calloc(iter_num, sizeof(bool));
 	uint32_t t_run=0, insert_idx=0;
 	uint32_t t_lba=0, *temp, temp_idx=0;
-	while(!check_done(empty, lsm->sizefactor)){
+	while(!check_done(empty, iter_num)){
 		t_lba=UINT32_MAX;
-		for(uint32_t i=0; i<lsm->sizefactor; i++){
+		for(uint32_t i=0; i<iter_num; i++){
 			if(empty[i]) continue;
 			temp=(uint32_t*)iter_pick(iter_set[i]);
 			if(t_lba> *temp){
@@ -111,7 +58,7 @@ void lsm_compaction(LSM *lsm, uint32_t idx){
 		}
 
 		//remove same lba
-		for(uint32_t i=0; i<lsm->sizefactor; i++){
+		for(uint32_t i=0; i<iter_num; i++){
 			if(empty[i]) continue;
 			if(i==t_run) continue;
 			temp=(uint32_t*)iter_pick(iter_set[i]);
@@ -129,9 +76,23 @@ void lsm_compaction(LSM *lsm, uint32_t idx){
 			empty[t_run]=true;
 		}
 	}
-	
+
 	new_run.now=insert_idx/LPPB+(insert_idx%LPPB?1:0);
 
+	free(empty);
+	return new_run;
+}
+
+void lsm_compaction(LSM *lsm, uint32_t idx){
+	iter **iter_set=(iter**)malloc(sizeof(iter*) * lsm->sizefactor);
+	for(uint32_t i=0; i<lsm->sizefactor; i++){
+		iter_set[i]=iter_init(0, lsm->array[idx].array[i].now, &lsm->array[idx].array[i], run_get_value_from_idx);
+	}
+
+	run new_run=lsm_level_to_run(lsm, NULL, idx, iter_set, lsm->sizefactor, 0);
+	run *t=&lsm->array[idx+1].array[lsm->array[idx+1].now];
+	run_free(t);
+	
 	run *now;
 	uint32_t i;
 	for_each_target_max(&lsm->array[idx], i, now){
@@ -139,8 +100,6 @@ void lsm_compaction(LSM *lsm, uint32_t idx){
 	}
 	free(lsm->array[idx].array);
 	level_init(&lsm->array[idx], idx+1, lsm);
-
-	free(empty);
 	for(uint32_t i=0; i<lsm->sizefactor; i++){
 		free(iter_set[i]);
 	}
@@ -156,6 +115,7 @@ int lba_comp(const void *_a, const void *_b){
 
 int lsm_insert(LSM* lsm, uint32_t lba){
 	lsm->buffer->array[lsm->buffer->now++]=lba;
+	write_cnt++;
 
 	if(!full_check_target(lsm->buffer)) return 1;
 	qsort(lsm->buffer->array, lsm->buffer->now, sizeof(uint32_t), lba_comp);
@@ -163,18 +123,27 @@ int lsm_insert(LSM* lsm, uint32_t lba){
 	z_level_insert_block(&lsm->array[0], *lsm->buffer);
 	lsm->array[0].now++;
 	
-
 	for(uint32_t i=0; i<lsm->max-1; i++){
+		if(i==lsm->max-2 &&	full_check_target(&lsm->array[i])
+				&& full_check_target(&lsm->array[i+1])){
+		//	printf("compaction %d -> %d\n", i, i+1);
+			last_compaction_cnt++;
+			lsm_last_compaction(lsm, &lsm->array[i], i);
+			continue;
+		}
+
 		if(full_check_target(&lsm->array[i])){
+		//	printf("compaction %d -> %d\n", i, i+1);
 			lsm_compaction(lsm, i);		
 		}
 		else break;
 	}
-
+/*
 	if(full_check_target(&lsm->array[lsm->max-1])){
 		fprintf(stderr,"last level full!!\n");
 		return -1;
 	}
+*/
 	free(lsm->buffer);
 	lsm->buffer=(block*)malloc(sizeof(block));
 	block_init(lsm->buffer);

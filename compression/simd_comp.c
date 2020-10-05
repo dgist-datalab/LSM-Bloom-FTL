@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
 
 size_t compress(uint32_t * datain, size_t length, uint8_t * buffer) {
     uint32_t offset;
@@ -24,13 +25,15 @@ size_t compress(uint32_t * datain, size_t length, uint8_t * buffer) {
     return buffer - initout;
 }
 
-uint32_t * decompress(uint8_t *buffer, uint32_t num, uint32_t *backbuffer){
+uint32_t * decompress(uint8_t *buffer, uint32_t num, uint32_t *backbuffer, uint32_t *dataout){
 	uint32_t offset=0;
 	for(int k=0; k * SIMDBlockSize<num; ++k){
 		uint8_t b= *buffer++;
 		simdunpackd1(offset, (__m128i *) buffer, backbuffer, b);
 		buffer +=b *sizeof(__m128i);
 		offset=backbuffer[SIMDBlockSize-1];
+	//	printf("k:%u SIMDBlockSize:%u offset:%u\n", k, SIMDBlockSize, k*SIMDBlockSize*sizeof(uint32_t));
+		memcpy(dataout+k*SIMDBlockSize, backbuffer, SIMDBlockSize * sizeof(uint32_t));
 	}
 	return (uint32_t*)buffer;
 }
@@ -46,7 +49,11 @@ uint32_t* n_decompress(uint8_t *buffer, uint32_t number, uint32_t *backbuffer, u
 	return (uint32_t*)buffer;
 }
 
-
+uint64_t getsubtime(struct timeval big, struct timeval small){
+	uint64_t big_time=big.tv_sec * 1000000+ big.tv_usec;
+	uint64_t small_time=small.tv_sec *1000000+small.tv_usec;
+	return big_time-small_time;
+}
 
 int main(int argc, char *argv[]){
 
@@ -73,39 +80,46 @@ int main(int argc, char *argv[]){
 	uint32_t a,b;
 	uint32_t compsize=0;
 	uint32_t *datain=(uint32_t*)malloc(sizeof(uint32_t) * target_num);
+	uint32_t *dataout=(uint32_t*)malloc(sizeof(uint32_t) * target_num);
 	uint32_t data_idx=0;
 	uint32_t cnt=0;
 
 	uint32_t *backbuffer=malloc(SIMDBlockSize * sizeof(uint32_t));
-	uint64_t time=0;
 	uint32_t compressed_cnt=0;
 	uint32_t max_bits;
+	uint64_t all_comp_time=0,all_decomp_time=0;
+
+	struct timeval s, comp_t, decomp_t;
+
 	while((read=getline(&line, &len, f))!=-1){
 		sscanf(line, "%d%d", &a, &b);
 		if(b==0) continue;
 		datain[data_idx++]=b;
 		if(data_idx==target_num){
-			/*
-			compsize+=compress(datain, data_idx, buffer);
-			memset(datain, 0, sizeof(uint32_t) *target_num);
-			uint32_t *test=decompress(buffer, target_num, backbuffer);*/
-			for(uint32_t k=0; k<10; k++) printf("%u ", datain[k]);
+			gettimeofday(&s, NULL);
 			max_bits=maxbits_length(datain, data_idx);
-			compsize+=n_compress(datain, data_idx, buffer, max_bits);
-			uint32_t *test=n_decompress(buffer, data_idx, backbuffer, max_bits);
-			printf("\n");
-			for(uint32_t k=0; k<10; k++) printf("%u ", buffer[k]);
-			printf("\n");
+			//compsize+=n_compress(datain, data_idx, buffer, max_bits);
+			//for(uint32_t i=0; i<10; i++) printf("%u ", datain[i]); printf("\n");
+			compsize+=compress(datain, data_idx, buffer);
+			gettimeofday(&comp_t, NULL);
+			//uint32_t *test=n_decompress(buffer, data_idx, backbuffer, max_bits);
+			decompress(buffer, data_idx, backbuffer, dataout);
+			//for(uint32_t i=0; i<10; i++) printf("%u ", dataout[i]); printf("\n");
+			gettimeofday(&decomp_t, NULL);
+		
+			all_comp_time+=getsubtime(comp_t, s);
+			all_decomp_time+=getsubtime(decomp_t,comp_t);
+
 			compressed_cnt++;
 			data_idx=0;
 		}
-
-
 		cnt++;
 	}
 
 	float ratio=(float)compsize/(cnt*4);
 	float bits=ratio * 32;
-	printf("%.2lf\n",bits);
+	printf("bits:%.2lf, compsize:%u, origin:%u\n",bits, compsize, cnt*4);
+	printf("avg_comp_time: %lu, %lf micro\n",all_comp_time,(double)all_comp_time/compressed_cnt);
+	printf("avg_decomp_time: %lu, %lf micro\n",all_comp_time, (double)all_decomp_time/compressed_cnt);
 	return 1;
 }

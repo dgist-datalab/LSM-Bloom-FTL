@@ -38,6 +38,7 @@ double get_target_each_fpr_w_mem(float block_fpr,uint32_t membernum){
 uint32_t get_number_of_bits(float target_fpr){
 	float t=1/target_fpr;
 	uint32_t tt=ceil(log2(t));
+	//printf("tt:%u\n",tt);
 	return pow(2,tt) < t ? tt+1: tt;
 }
 
