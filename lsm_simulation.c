@@ -6,13 +6,7 @@
 using namespace std;
 extern uint32_t write_cnt;
 extern uint32_t last_compaction_cnt;
-static inline void run_insert_value(run *r, uint32_t lba, uint32_t idx){
-	uint32_t block_n=idx/LPPB;
-	uint32_t offset=idx%LPPB;
-	r->array[block_n].array[offset]=lba;
-	r->array[block_n].now++;
-	write_cnt++;
-}
+extern monitor lsm_monitor;
 
 LSM* lsm_init(char t, uint32_t level_num, uint32_t size_factor, uint32_t blocknum){
 	LSM *lsm=(LSM*)malloc(sizeof(LSM));
@@ -36,6 +30,7 @@ LSM* lsm_init(char t, uint32_t level_num, uint32_t size_factor, uint32_t blocknu
 
 	lsm->buffer=(block*)malloc(sizeof(block));
 	block_init(lsm->buffer);
+	lsm->last_level_valid=0;
 	return lsm;
 }
 
@@ -70,7 +65,7 @@ run lsm_level_to_run(LSM *lsm, level *lev, uint32_t idx, iter **iter_set, uint32
 			}
 		}
 
-		run_insert_value(&new_run, t_lba, insert_idx++);
+		run_insert_value(&new_run, t_lba, insert_idx++, &write_cnt);
 		iter_move(iter_set[t_run]);
 		if(!iter_pick(iter_set[t_run])){
 			empty[t_run]=true;
@@ -84,6 +79,10 @@ run lsm_level_to_run(LSM *lsm, level *lev, uint32_t idx, iter **iter_set, uint32
 }
 
 void lsm_compaction(LSM *lsm, uint32_t idx){
+
+	lsm_monitor.level_read_num[idx]+=level_data(&lsm->array[idx]);
+
+	uint32_t before_write=write_cnt;
 	iter **iter_set=(iter**)malloc(sizeof(iter*) * lsm->sizefactor);
 	for(uint32_t i=0; i<lsm->sizefactor; i++){
 		iter_set[i]=iter_init(0, lsm->array[idx].array[i].now, &lsm->array[idx].array[i], run_get_value_from_idx);
@@ -105,6 +104,8 @@ void lsm_compaction(LSM *lsm, uint32_t idx){
 	}
 	free(iter_set);
 	level_insert_run(&lsm->array[idx+1], new_run);
+	
+	lsm_monitor.level_write_num[idx]+=write_cnt-before_write;
 }
 
 int lba_comp(const void *_a, const void *_b){
@@ -138,12 +139,7 @@ int lsm_insert(LSM* lsm, uint32_t lba){
 		}
 		else break;
 	}
-/*
-	if(full_check_target(&lsm->array[lsm->max-1])){
-		fprintf(stderr,"last level full!!\n");
-		return -1;
-	}
-*/
+
 	free(lsm->buffer);
 	lsm->buffer=(block*)malloc(sizeof(block));
 	block_init(lsm->buffer);
