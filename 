@@ -8,10 +8,8 @@
 #include "lsm_simulation.h"
 #include "iteration.h"
 
-#define FASTFINDING
-
 using namespace std;
-extern uint64_t write_cnt;
+extern uint32_t write_cnt;
 extern monitor lsm_monitor;
 bool debug;
 
@@ -81,20 +79,10 @@ uint64_t getsubtime(struct timeval big, struct timeval small){
 	return big_time-small_time;
 }
 
-void lsm_last_gc(LSM *lsm, run *rset,uint32_t run_num, uint32_t target_block, bool needmerge){
+void lsm_last_gc(LSM *lsm, run *rset,uint32_t run_num, uint32_t target_block){
 	level *last_level=&lsm->array[lsm->max-1];
 	uint32_t invalid_number=0, valid_number=0;
 	uint32_t target_run_max=0;
-
-	run *t_rset=NULL;
-	if(!rset){
-		run_num=lsm->array[lsm->max-1].now;
-		t_rset=(run*)malloc(sizeof(run) * lsm->array[lsm->max-1].now);
-		for(uint32_t i=0; i<run_num; i++){
-			t_rset[i]=lsm->array[lsm->max-1].array[i];	
-		}
-	}
-
 	queue<uint32_t> *valid_lba_list=new queue<uint32_t>[run_num];
 	run *now;
 
@@ -114,9 +102,6 @@ void lsm_last_gc(LSM *lsm, run *rset,uint32_t run_num, uint32_t target_block, bo
 			uint32_t l_idx=0;
 			for_each_target_now(b, l_idx, lba){
 				bool isvalid=true;
-#ifdef FASTFINDING
-				isvalid=(lsm->lba_run_id[*lba]==now->id);
-#else
 				if(r_it==0){
 					for(uint32_t t_r_idx=(lsm->last_level_valid?lsm->last_level_valid:1); t_r_idx<run_num; t_r_idx++){
 						if(isexist_run(*lba, &rset[t_r_idx])){
@@ -134,7 +119,6 @@ void lsm_last_gc(LSM *lsm, run *rset,uint32_t run_num, uint32_t target_block, bo
 					}
 				}
 
-#endif
 				if(!isvalid){
 					invalid_number++;
 				}
@@ -146,7 +130,7 @@ void lsm_last_gc(LSM *lsm, run *rset,uint32_t run_num, uint32_t target_block, bo
 		}
 		target_run_max++;
 		if(invalid_number/LPPB - (valid_number%LPPB?1:0) >= target_block) {
-			if(target_run_max==1 && (valid_number!=0 || !needmerge)){
+			if(target_run_max==1 && valid_number!=0){
 				continue;
 			}
 			break;
@@ -166,35 +150,39 @@ void lsm_last_gc(LSM *lsm, run *rset,uint32_t run_num, uint32_t target_block, bo
 	}
 	lsm_monitor.last_level_merg_run_num[target_run_max]++;
 
+
 	gettimeofday(&a, NULL);
 	run new_run;
-	run_init(&new_run, valid_number/LPPB + (valid_number%LPPB?1:0), false);
-	bool *empty=(bool*)calloc(target_run_max, sizeof(bool));
-	uint32_t t_idx, t_lba;
-	uint32_t insert_idx=0;
-	while(!check_done(empty, target_run_max)){
-		uint32_t temp;
-		t_lba=UINT32_MAX;
-		for(int i=0; i<target_run_max; i++){
-			if(empty[i]) continue;
-			temp=valid_lba_list[i].front();
-			if(temp==t_lba){
-				printf("it can't have same lba:%u %s:%d\n", temp,__FILE__, __LINE__);
-				abort();
+	if(target_run_max!=1){
+		run_init(&new_run, valid_number/LPPB + (valid_number%LPPB?1:0));
+		bool *empty=(bool*)calloc(target_run_max, sizeof(bool));
+		uint32_t t_idx, t_lba;
+		uint32_t insert_idx=0;
+		while(!check_done(empty, target_run_max)){
+			uint32_t temp;
+			t_lba=UINT32_MAX;
+			for(int i=0; i<target_run_max; i++){
+				if(empty[i]) continue;
+				temp=valid_lba_list[i].front();
+				if(temp==t_lba){
+					printf("it can't have same lba:%u %s:%d\n", temp,__FILE__, __LINE__);
+					abort();
+				}
+				if(temp < t_lba){
+					t_lba=temp;
+					t_idx=i;
+				}
 			}
-			if(temp < t_lba){
-				t_lba=temp;
-				t_idx=i;
-			}
-		}
 
-		run_insert_value(&new_run, t_lba, insert_idx++, &write_cnt, lsm->lba_run_id);
-		valid_lba_list[t_idx].pop();
-		empty[t_idx]=valid_lba_list[t_idx].empty();
-	}	
-	new_run.now=insert_idx/LPPB+(insert_idx%LPPB?1:0);
-	free(empty);
+			run_insert_value(&new_run, t_lba, insert_idx++, &write_cnt, lsm->lba_run_id);
+			valid_lba_list[t_idx].pop();
+			empty[t_idx]=valid_lba_list[t_idx].empty();
+		}	
 
+
+		new_run.now=insert_idx/LPPB+(insert_idx%LPPB?1:0);
+		free(empty);
+	}
 	gettimeofday(&b, NULL);
 	printf("merge time : %lu\n", getsubtime(b, a));
 
@@ -209,6 +197,12 @@ void lsm_last_gc(LSM *lsm, run *rset,uint32_t run_num, uint32_t target_block, bo
 		level_insert_run(&new_last_level, rset[i]);
 	}
 
+	for_each_target_max(&lsm->array[lsm->max-2], i, now){
+		run_free(now);
+	}
+	free(lsm->array[lsm->max-2].array);
+	level_init(&lsm->array[lsm->max-2], lsm->max-2, lsm);
+	
 	for_each_target_max(&lsm->array[lsm->max-1], i, now){
 		if(i>=target_run_max && lsm->array[lsm->max-1].now>i) continue;
 		run_free(now);
@@ -216,6 +210,5 @@ void lsm_last_gc(LSM *lsm, run *rset,uint32_t run_num, uint32_t target_block, bo
 	free(lsm->array[lsm->max-1].array);
 	lsm->array[lsm->max-1]=new_last_level;
 	lsm->last_level_valid=lsm->array[lsm->max-1].now;
-	free(t_rset);
 	delete [] valid_lba_list;
 }

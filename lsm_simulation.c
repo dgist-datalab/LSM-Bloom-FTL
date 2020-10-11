@@ -4,39 +4,54 @@
 #include "lsm_simulation.h"
 #include "iteration.h"
 using namespace std;
-extern uint32_t write_cnt;
+extern uint64_t write_cnt;
 extern uint32_t last_compaction_cnt;
 extern monitor lsm_monitor;
 
-LSM* lsm_init(char t, uint32_t level_num, uint32_t size_factor, uint32_t blocknum){
+LSM *tlsm;
+
+LSM* lsm_init(char t, uint32_t level_num, uint32_t size_factor, uint32_t blocknum, uint64_t range){
 	LSM *lsm=(LSM*)malloc(sizeof(LSM));
-	if(level_num){
+	if(level_num && size_factor){
 		lsm->level=level_num;
-		lsm->sizefactor=get_size_factor(level_num, blocknum);
+		lsm->sizefactor=size_factor;
 		lsm->now=0;
 		lsm->max=level_num;
 	}
 	else{
-		lsm->sizefactor=size_factor;
-		lsm->level=get_level(size_factor, blocknum);
-		lsm->now=0;
-		lsm->max=lsm->level;
+		if(level_num){
+			lsm->level=level_num;
+			lsm->sizefactor=get_size_factor(level_num, blocknum);
+			lsm->now=0;
+			lsm->max=level_num;
+		}
+		else{
+			lsm->sizefactor=size_factor;
+			lsm->level=get_level(size_factor, blocknum);
+			lsm->now=0;
+			lsm->max=lsm->level;
+		}
 	}
+	lsm->max_block_num=blocknum;
+	lsm->valid_block_num=blocknum;
 
 	lsm->array=(level*)malloc(sizeof(level) * lsm->max);
 	for(uint32_t i=0; i<lsm->max; i++){
 		level_init(&lsm->array[i], i+1, lsm);
 	}
 
+	lsm->lba_run_id=(uint64_t*)calloc(sizeof(uint64_t), range);
+
 	lsm->buffer=(block*)malloc(sizeof(block));
 	block_init(lsm->buffer);
 	lsm->last_level_valid=0;
+	tlsm=lsm;
 	return lsm;
 }
 
 run lsm_level_to_run(LSM *lsm, level *lev, uint32_t idx, iter **iter_set, uint32_t iter_num, uint32_t target_run_size){
 	run new_run;
-	run_init(&new_run, target_run_size?target_run_size:pow(lsm->sizefactor, idx+1));
+	run_init(&new_run, target_run_size?target_run_size:pow(lsm->sizefactor, idx+1), true);
 
 	bool *empty=(bool*)calloc(iter_num, sizeof(bool));
 	uint32_t t_run=0, insert_idx=0;
@@ -65,7 +80,7 @@ run lsm_level_to_run(LSM *lsm, level *lev, uint32_t idx, iter **iter_set, uint32
 			}
 		}
 
-		run_insert_value(&new_run, t_lba, insert_idx++, &write_cnt);
+		run_insert_value(&new_run, t_lba, insert_idx++, &write_cnt, lsm->lba_run_id);
 		iter_move(iter_set[t_run]);
 		if(!iter_pick(iter_set[t_run])){
 			empty[t_run]=true;
@@ -162,7 +177,7 @@ void lsm_print_level(LSM *lsm, uint32_t target_level){
 	}
 }
 
-void lsm_free(LSM *lsm){
+void lsm_free(LSM *lsm, uint64_t t){
 	for(uint32_t idx=0; idx<lsm->max; idx++){
 		uint32_t i=0;
 		run *now;
@@ -173,4 +188,65 @@ void lsm_free(LSM *lsm){
 	}
 	free(lsm->array);
 	free(lsm->buffer);
+
+	printf("lev read  write  WAF BF+PIN\n");
+	printf("0  0  %lu  1\n", t);
+
+	for(uint32_t i=0; i<lsm->max; i++){
+		printf("%u %lu  %lu  %.3lf %.3lf\n", i+1,lsm_monitor.level_read_num[i], lsm_monitor.level_write_num[i], 
+				(double) lsm_monitor.level_write_num[i]/lsm_monitor.level_read_num[i],
+				(double) lsm_monitor.level_write_num[i]/lsm_monitor.level_read_num[i]/PACK
+				);
+	}
+	printf("last level merge run\n");
+	for(uint32_t i=0; i<=lsm->sizefactor; i++){
+		printf("%u %lu\n", i, lsm_monitor.last_level_merg_run_num[i]);
+	}
+}
+
+void run_init(run *r, uint32_t blocknum, bool isconsume){
+	static int cnt=0;
+	r->now=0;
+	r->max=blocknum;
+	r->id=cnt++;
+	r->array=(block*)malloc(sizeof(block)* blocknum);
+	for(uint32_t i=0; i<r->max; i++){
+		if(isconsume && !tlsm->valid_block_num){
+			lsm_last_gc(tlsm, NULL, UINT32_MAX, r->max-i, false);
+		}
+		block_init(&r->array[i]);
+	}
+}
+
+void run_free(run *r){
+	tlsm->valid_block_num+=r->now;
+	free((r)->array);
+}
+
+void level_init(level *lev, uint32_t idx, LSM *lsm){
+	lev->now=0;
+	lev->max=lsm->sizefactor;
+	lev->array=(run*)malloc(sizeof(run)*lev->max);
+	for(uint32_t i=0; i<lev->max; i++){
+		run_init(&lev->array[i], pow(lsm->sizefactor, idx-1), false);
+	}
+}
+
+void run_insert_value(run *r, uint32_t lba, uint32_t idx, uint64_t *write_monitor_cnt, uint64_t* lba_run_id){
+	uint32_t block_n=idx/LPPB;
+	uint32_t offset=idx%LPPB;
+	lba_run_id[lba]=r->id;
+	if(offset % 64==0){
+		r->array[block_n].guard[offset/64]=lba;
+	}
+
+	if(!r->array[block_n].used){
+		r->array[block_n].used=true;
+		tlsm->valid_block_num--;
+		tlsm->now_block_num++;
+	}
+
+	r->array[block_n].array[offset]=lba;
+	r->array[block_n].now++;
+	(*write_monitor_cnt)++;
 }

@@ -17,7 +17,16 @@ void lsm_last_compaction(LSM *lsm, level *lev, uint32_t idx){
 	for(uint32_t i=0; i<lsm->sizefactor; i++){
 		iter_set[i]=iter_init(0, lsm->array[idx].array[i].now, &lsm->array[idx].array[i], run_get_value_from_idx);
 	}
+
 	run upper_run=lsm_level_to_run(lsm, NULL, idx, iter_set, iter_num, 0);
+
+	uint32_t i;
+	run *now;
+	for_each_target_max(&lsm->array[idx], i, now){
+		run_free(now);
+	}
+	free(lsm->array[idx].array);
+	level_init(&lsm->array[idx], lsm->max-2, lsm);
 
 	lsm_monitor.level_write_num[idx]+=write_cnt-before_cnt;
 	for(uint32_t i=0; i<iter_num; i++){
@@ -33,7 +42,7 @@ void lsm_last_compaction(LSM *lsm, level *lev, uint32_t idx){
 	run_set[iter_num++]=upper_run;
 
 	before_cnt=write_cnt;
-	lsm_last_gc(lsm, run_set, iter_num, num_block_run(upper_run));
+	lsm_last_gc(lsm, run_set, iter_num, num_block_run(upper_run), true);
 
 	lsm_monitor.level_write_num[idx+1]+=write_cnt-before_cnt;
 }

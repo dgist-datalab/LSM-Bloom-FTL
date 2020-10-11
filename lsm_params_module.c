@@ -86,3 +86,58 @@ uint32_t get_sparse_sorted_head(uint32_t level, uint32_t size_factor){
 	}
 	return head_num;
 }
+
+static inline uint32_t get_total_bn(uint32_t level, uint32_t size_factor, uint32_t *array){
+	uint32_t res=0;
+	uint32_t start=1;
+	uint32_t sf=size_factor;
+	for(uint32_t i=0; i<level; i++){
+		if(array){
+			array[i]=(start*size_factor);
+		}
+		res+=(start*size_factor);
+		start*=size_factor;
+	}
+	return res;
+}
+
+static inline uint32_t array_some(uint32_t level, uint32_t *array){
+	uint32_t res=0;
+	for(uint32_t i=0; i<level; i++) res+=array[i];
+	return res;
+}
+
+uint32_t *get_blocknum_list(uint32_t *_level, uint32_t *_size_factor, uint32_t blocknum, float *ratio){
+	if(!(_level || _size_factor)) return NULL;
+	uint32_t level=*_level?*_level:get_level(*_size_factor,blocknum);
+	uint32_t size_factor=*_size_factor?*_size_factor:get_size_factor(*_level, blocknum);
+	uint32_t *res=(uint32_t *)malloc(sizeof(uint32_t)*level);
+	uint32_t calc_bn=get_total_bn(level, size_factor, res);
+
+	if(calc_bn>blocknum){
+		while(1){
+			calc_bn=get_total_bn(level,size_factor-1, res);
+			if(calc_bn > blocknum){
+				size_factor--;
+				continue;
+			}
+			else{
+				size_factor--;
+				break;
+			}
+		}
+	}
+
+	if(calc_bn < blocknum){
+		uint32_t remain=blocknum-calc_bn;
+		res[level-1]+=remain;
+	}
+
+	if(ratio){
+		*ratio=((float)array_some(level, res)-res[level-1])/res[level-1];
+	}
+	if(!(*_level)) *_level=level;
+	if(!(*_size_factor)) *_size_factor=size_factor;
+	return res;
+}
+
