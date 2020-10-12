@@ -16,6 +16,8 @@ typedef struct monitor{
 	uint64_t level_read_num[100];
 	uint64_t level_write_num[100];
 	uint64_t last_level_merg_run_num[100];
+	uint64_t last_run_valid;
+	uint64_t last_run_invalid;
 }monitor;
 
 typedef struct block{
@@ -49,9 +51,11 @@ typedef struct LSM{
 	uint32_t last_level_valid;
 	uint64_t *lba_run_id;
 	block *buffer;
-	uint32_t max_block_num;
-	uint32_t valid_block_num;
-	uint32_t now_block_num;
+	int32_t max_block_num;
+	int32_t valid_block_num;
+	int32_t now_block_num;
+	uint64_t gc_cnt;
+	uint64_t range;
 }LSM;
 
 #define for_each_target_max(target, idx, _now)\
@@ -62,7 +66,7 @@ typedef struct LSM{
 
 #define full_check_target(target) ((target)->now>=(target)->max)
 #define run_insert_block(r, b) ((r)->array[(r)->now++]=(b))
-#define z_level_insert_block(l, b) (run_insert_block(&(l)->array[(l)->now],(b)))
+
 #define level_insert_run(l, r) ((l)->array[(l)->now++]=(r))
 
 
@@ -74,19 +78,11 @@ static inline void block_init(block *b, uint32_t max=PAGEPERBLOCK){
 	memset(b->guard, -1, sizeof(b->guard));
 }
 
-void run_init(run *r, uint32_t blocknum, bool);
+void run_init(run *r, uint32_t blocknum);
 
 void level_init(level *lev, uint32_t idx, LSM *lsm);
 
-static inline void *run_get_value_from_idx(void *r, uint32_t idx){
-	run *tr=(run*)r;
-	if(idx>=tr->now * LPPB) return NULL;
-	uint32_t block_n=idx/LPPB;
-	uint32_t offset=idx%LPPB;
-	uint32_t * target=&tr->array[block_n].array[offset];
-	if(*target==0) return NULL;
-	else return target;
-}
+void *run_get_value_from_idx(void *r, uint32_t idx);
 
 static inline bool check_done(bool *a, uint32_t idx){
 	for(uint32_t i=0; i<idx; i++){
@@ -111,10 +107,13 @@ void run_insert_value(run *r, uint32_t lba, uint32_t idx, uint64_t *write_monito
 LSM* lsm_init(char t, uint32_t level, uint32_t size_factor, uint32_t blocknum, uint64_t range);
 int lsm_insert(LSM*, uint32_t lba);
 void lsm_print_level(LSM *, uint32_t target_level);
+void lsm_print_run(LSM *, uint32_t target_level);
+void lsm_print_summary(run *);
 void lsm_last_compaction(LSM*, level *, uint32_t idx);
 void lsm_last_gc(LSM *lsm, run *rset, uint32_t run_num, uint32_t target_block, bool needmerge);
 run lsm_level_to_run(LSM *lsm, level *lev, uint32_t idx, iter**, uint32_t iter_num, uint32_t target_run_size);
-void lsm_free(LSM *lsm, uint64_t );
+void lsm_free(LSM *lsm, uint64_t);
 void run_free(run *r);
+void z_level_insert_block(level *l, block b);
 
 #endif

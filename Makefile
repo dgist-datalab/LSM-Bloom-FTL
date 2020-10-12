@@ -2,7 +2,7 @@ all: lsm.exe tester.exe
 
 CFLAGS=\
 	   	-g\
-#		-O3\
+		-O3\
 #		-fsanitize=address\
 
 tester.exe: lsm_params_module.c main.c bloom_params_module.c

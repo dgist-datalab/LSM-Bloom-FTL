@@ -40,8 +40,9 @@ LSM* lsm_init(char t, uint32_t level_num, uint32_t size_factor, uint32_t blocknu
 		level_init(&lsm->array[i], i+1, lsm);
 	}
 
-	lsm->lba_run_id=(uint64_t*)calloc(sizeof(uint64_t), range);
+	lsm->lba_run_id=(uint64_t*)calloc(sizeof(uint64_t), range+1);
 
+	lsm->range=range+1;
 	lsm->buffer=(block*)malloc(sizeof(block));
 	block_init(lsm->buffer);
 	lsm->last_level_valid=0;
@@ -51,11 +52,16 @@ LSM* lsm_init(char t, uint32_t level_num, uint32_t size_factor, uint32_t blocknu
 
 run lsm_level_to_run(LSM *lsm, level *lev, uint32_t idx, iter **iter_set, uint32_t iter_num, uint32_t target_run_size){
 	run new_run;
-	run_init(&new_run, target_run_size?target_run_size:pow(lsm->sizefactor, idx+1), true);
+	run_init(&new_run, target_run_size?target_run_size:pow(lsm->sizefactor, idx+1));
+
 
 	bool *empty=(bool*)calloc(iter_num, sizeof(bool));
 	uint32_t t_run=0, insert_idx=0;
 	uint32_t t_lba=0, *temp, temp_idx=0;
+	if((idx==lsm->max-2 &&tlsm->valid_block_num < (new_run.max/lsm->sizefactor)) || 
+			(idx!=lsm->max-2 && tlsm->valid_block_num<(new_run.max))){
+		lsm_last_gc(tlsm, NULL, UINT32_MAX, new_run.max-tlsm->valid_block_num, false);	
+	}
 	while(!check_done(empty, iter_num)){
 		t_lba=UINT32_MAX;
 		for(uint32_t i=0; i<iter_num; i++){
@@ -79,7 +85,6 @@ run lsm_level_to_run(LSM *lsm, level *lev, uint32_t idx, iter **iter_set, uint32
 				}
 			}
 		}
-
 		run_insert_value(&new_run, t_lba, insert_idx++, &write_cnt, lsm->lba_run_id);
 		iter_move(iter_set[t_run]);
 		if(!iter_pick(iter_set[t_run])){
@@ -94,10 +99,12 @@ run lsm_level_to_run(LSM *lsm, level *lev, uint32_t idx, iter **iter_set, uint32
 }
 
 void lsm_compaction(LSM *lsm, uint32_t idx){
-
+	//static int cnt=0;
+	//printf("\ncompaction cnt %d %u -> %u (M:V - %u:%u)\n",cnt++, idx, idx+1, tlsm->max_block_num, tlsm->valid_block_num);
+	lsm->gc_cnt=0;
+	uint64_t before_write=write_cnt;
 	lsm_monitor.level_read_num[idx]+=level_data(&lsm->array[idx]);
 
-	uint32_t before_write=write_cnt;
 	iter **iter_set=(iter**)malloc(sizeof(iter*) * lsm->sizefactor);
 	for(uint32_t i=0; i<lsm->sizefactor; i++){
 		iter_set[i]=iter_init(0, lsm->array[idx].array[i].now, &lsm->array[idx].array[i], run_get_value_from_idx);
@@ -109,6 +116,8 @@ void lsm_compaction(LSM *lsm, uint32_t idx){
 	
 	run *now;
 	uint32_t i;
+	
+	//lsm_print_run(lsm, idx);
 	for_each_target_max(&lsm->array[idx], i, now){
 		run_free(now);
 	}
@@ -119,8 +128,10 @@ void lsm_compaction(LSM *lsm, uint32_t idx){
 	}
 	free(iter_set);
 	level_insert_run(&lsm->array[idx+1], new_run);
-	
-	lsm_monitor.level_write_num[idx]+=write_cnt-before_write;
+
+	lsm_monitor.level_write_num[idx]+=write_cnt-before_write-lsm->gc_cnt;
+	//lsm_print_run(lsm, idx+1);
+
 }
 
 int lba_comp(const void *_a, const void *_b){
@@ -177,12 +188,53 @@ void lsm_print_level(LSM *lsm, uint32_t target_level){
 	}
 }
 
+void lsm_print_run(LSM *lsm, uint32_t target_level){
+	run *now;
+	uint32_t idx=0;
+	for_each_target_now(&lsm->array[target_level], idx, now){
+		printf("[%u, %u] now:%u max:%u used_list:", target_level, idx, now->now, now->max);
+		block *b;
+		uint32_t idx2=0;
+		for_each_target_now(now, idx2, b){
+			//printf("%u,", b->used);
+			printf("%u-%u,", b->used, b->now);
+		}
+		printf("\n");
+	}
+}
+
+
+void lsm_print_summary(run *t=NULL){
+	run *now;
+	uint32_t idx=0;
+	LSM *lsm=tlsm;
+	uint32_t total_block=0;
+	for(uint32_t i=0; i<lsm->max; i++){
+		printf("level:%u\n",i);
+		for_each_target_now(&lsm->array[i], idx, now){
+			printf("[%u, %u]id:%lu now:%u max:%u\n", i, idx, now->id, now->now, now->max);
+			total_block+=now->now;
+		}
+	}
+	if(t){
+		now=t;
+		printf("[temp]id:%lu now:%u max:%u\n", now->id, now->now, now->max);
+		total_block+=now->now;
+	}
+
+	printf("total block:%u max block:%u valid_block:%u\n", total_block, lsm->max_block_num, lsm->valid_block_num);
+	if(lsm->max_block_num != total_block+lsm->valid_block_num){
+		printf("break!\n");
+		abort();
+	}
+}
+
 void lsm_free(LSM *lsm, uint64_t t){
 	for(uint32_t idx=0; idx<lsm->max; idx++){
 		uint32_t i=0;
 		run *now;
 		for_each_target_max(&lsm->array[idx], i, now){
-			run_free(now);
+			free(now->array);
 		}
 		free(lsm->array[idx].array);
 	}
@@ -192,34 +244,40 @@ void lsm_free(LSM *lsm, uint64_t t){
 	printf("lev read  write  WAF BF+PIN\n");
 	printf("0  0  %lu  1\n", t);
 
-	for(uint32_t i=0; i<lsm->max; i++){
+	for(uint32_t i=0; i<=lsm->max; i++){
 		printf("%u %lu  %lu  %.3lf %.3lf\n", i+1,lsm_monitor.level_read_num[i], lsm_monitor.level_write_num[i], 
-				(double) lsm_monitor.level_write_num[i]/lsm_monitor.level_read_num[i],
-				(double) lsm_monitor.level_write_num[i]/lsm_monitor.level_read_num[i]/PACK
+				(double) lsm_monitor.level_write_num[i]/t,
+				(double) lsm_monitor.level_write_num[i]/t/PACK
 				);
 	}
+
+	printf("invalid ratio %.2lf\n", (double)lsm_monitor.last_run_invalid/(lsm_monitor.last_run_invalid+lsm_monitor.last_run_valid));
+
 	printf("last level merge run\n");
 	for(uint32_t i=0; i<=lsm->sizefactor; i++){
 		printf("%u %lu\n", i, lsm_monitor.last_level_merg_run_num[i]);
 	}
+
 }
 
-void run_init(run *r, uint32_t blocknum, bool isconsume){
-	static int cnt=0;
+void run_init(run *r, uint32_t blocknum){
+	static uint32_t cnt=0;
 	r->now=0;
 	r->max=blocknum;
 	r->id=cnt++;
 	r->array=(block*)malloc(sizeof(block)* blocknum);
 	for(uint32_t i=0; i<r->max; i++){
-		if(isconsume && !tlsm->valid_block_num){
-			lsm_last_gc(tlsm, NULL, UINT32_MAX, r->max-i, false);
-		}
 		block_init(&r->array[i]);
 	}
 }
 
 void run_free(run *r){
-	tlsm->valid_block_num+=r->now;
+	for(uint32_t i=0; i<r->now; i++){
+		if(r->array[i].used){
+			printf("should be invalidate before free %s:%d\n", __FILE__, __LINE__);
+			abort();
+		}
+	}
 	free((r)->array);
 }
 
@@ -228,7 +286,7 @@ void level_init(level *lev, uint32_t idx, LSM *lsm){
 	lev->max=lsm->sizefactor;
 	lev->array=(run*)malloc(sizeof(run)*lev->max);
 	for(uint32_t i=0; i<lev->max; i++){
-		run_init(&lev->array[i], pow(lsm->sizefactor, idx-1), false);
+		run_init(&lev->array[i], pow(lsm->sizefactor, idx-1));
 	}
 }
 
@@ -243,6 +301,11 @@ void run_insert_value(run *r, uint32_t lba, uint32_t idx, uint64_t *write_monito
 	if(!r->array[block_n].used){
 		r->array[block_n].used=true;
 		tlsm->valid_block_num--;
+		if(tlsm->valid_block_num < 0){
+			lsm_print_summary(NULL);
+			printf("valid block can't be minus %s:%d\n", __FILE__, __LINE__);
+			abort();
+		}
 		tlsm->now_block_num++;
 	}
 
@@ -250,3 +313,24 @@ void run_insert_value(run *r, uint32_t lba, uint32_t idx, uint64_t *write_monito
 	r->array[block_n].now++;
 	(*write_monitor_cnt)++;
 }
+
+void *run_get_value_from_idx(void *r, uint32_t idx){
+	run *tr=(run*)r;
+	uint32_t block_n=idx/LPPB;
+	uint32_t offset=idx%LPPB;
+	if(idx>=tr->now * LPPB){
+		return NULL;
+	}
+
+	uint32_t * target=&tr->array[block_n].array[offset];
+	if(*target==0){
+		return NULL;
+	}
+	return target;
+}
+
+void z_level_insert_block(level *l, block b){
+	tlsm->valid_block_num--;
+	(run_insert_block(&(l)->array[(l)->now],(b)));
+}
+

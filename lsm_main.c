@@ -6,7 +6,8 @@
 #include <stdlib.h>
 
 #define LEVEL 4
-#define ROUND 2
+#define ROUND 16
+#define OP 0.10f
 
 uint64_t write_cnt=0;
 uint64_t last_compaction_cnt=0;
@@ -18,11 +19,11 @@ int main(){
 	float t;
 	uint32_t *list=get_blocknum_list(&level, &size_factor, BLOCKNUMBER, &t);
 
-	uint64_t range=(uint32_t)((double)(TOTALSIZE/4/K) * t);
-	fprintf(stderr, "range :%lu blocknum:%lu\n", range, BLOCKNUMBER);
+	uint64_t range=(uint32_t)((double)(TOTALSIZE/4/K) * (1-OP));
+	fprintf(stderr, "range :%lu origin:%lu, blocknum:%lu\n", range, (uint64_t)BLOCKNUMBER*LPPB,BLOCKNUMBER);
 	fprintf(stderr, "size_factor: %u\n", size_factor);
-	fprintf(stderr, "ratio: %.2lf\n", t);
-	LSM *lsm=lsm_init(TIER, LEVEL, 0, BLOCKNUMBER, range);
+	fprintf(stderr, "ratio: %.2lf, OP: %f\n", t, OP);
+	LSM *lsm=lsm_init(TIER, LEVEL, size_factor, BLOCKNUMBER, range);
 
 	uint32_t max=0;
 	for(uint64_t i=0; i<range*ROUND; i++){
