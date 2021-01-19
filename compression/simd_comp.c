@@ -68,9 +68,9 @@ int main(int argc, char *argv[]){
 		abort();
 	}
 
-	uint32_t piece=atoi(argv[2]);
+	//uint32_t piece=atoi(argv[2]);
 
-	uint32_t target_num=1024*piece;
+	uint32_t target_num=8192;
 	uint8_t *buffer=malloc(target_num * sizeof(uint32_t) + target_num/SIMDBlockSize);
 
 	ssize_t read;

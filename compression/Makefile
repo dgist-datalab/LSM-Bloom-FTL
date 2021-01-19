@@ -1,6 +1,6 @@
-all: simdcomp
+all: compress
 
-simdcomp: simd_comp.c
+compress: simd_comp.c
 	gcc -fPIC -g -O3 -o compress simd_comp.c -lsimdcomp
 
 debug: simd_comp.c
