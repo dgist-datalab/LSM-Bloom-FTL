@@ -129,12 +129,14 @@ retry:
 	}
 	//printf("\t\ttr_it:%u\n",tr_it);
 	gettimeofday(&a,NULL);
-	
+	static int call_cnt=0;
+	call_cnt++;
 	r_it=tr_it;
 	{
 		now=&rset[r_it];
 		block *b;
 		uint32_t b_idx=0; 
+		uint32_t traverse_cnt=0;
 		for_each_target_now(now, b_idx, b){
 			uint32_t *lba;
 			uint32_t l_idx=0;
@@ -168,7 +170,17 @@ retry:
 					valid_number++;
 					valid_lba_list[target_run_max].push(*lba);
 				}
+				traverse_cnt++;
 			}
+			/*
+			if(call_cnt<2){
+				printf("l_idx:%u block_now:%u -> block_max:%u \n", l_idx, b->now, b->max);
+			}*/
+		}
+
+		if(traverse_cnt/(PAGEPERBLOCK*4) + (traverse_cnt%(PAGEPERBLOCK*4)?1:0) != now->now){
+			printf("wtf???\n");
+			abort();
 		}
 		target_run_max++;
 	}
@@ -230,6 +242,12 @@ retry:
 	free(empty);
 
 	lsm_monitor.level_write_num[lsm->max]+=write_cnt-before_write;
+	printf("\ngc written cnt:%lu aggregate:%lu\n", write_cnt-before_write, lsm_monitor.level_write_num[lsm->max]);
+	if(valid_number!=write_cnt-before_write){
+		printf("??\n");
+		abort();
+	}
+	
 	tlsm->gc_cnt+=write_cnt-before_write;
 	gettimeofday(&b, NULL);
 //	printf("merge time : %lu\n", getsubtime(b, a));
@@ -306,6 +324,7 @@ void __lsm_last_merge(LSM *lsm, run *rset, uint32_t run_num){
 	gettimeofday(&a,NULL);
 	for(uint32_t r_it=0; r_it<2; r_it++){
 		now=target_runs[r_it];
+		uint32_t traverse_cnt=0;
 		block *b;
 		uint32_t b_idx=0; 
 		for_each_target_now(now, b_idx, b){
@@ -341,9 +360,16 @@ void __lsm_last_merge(LSM *lsm, run *rset, uint32_t run_num){
 					valid_number++;
 					valid_lba_list[target_run_max].push(*lba);
 				}
+				traverse_cnt++;
 			}
+
+		}
+		if(traverse_cnt/(PAGEPERBLOCK*4) + (traverse_cnt%(PAGEPERBLOCK*4)?1:0) != now->now){
+			printf("wtf??? merge\n");
+			abort();
 		}
 		target_run_max++;
+		
 	}
 	gettimeofday(&b, NULL);
 //	printf("\nfiltering time : %lu\n", getsubtime(b, a));
@@ -421,7 +447,7 @@ void __lsm_last_merge(LSM *lsm, run *rset, uint32_t run_num){
 	lsm->array[lsm->max-1]=new_last_level;
 	lsm->last_level_valid=lsm->array[lsm->max-1].now;
 
-	//printf("iv/total ratio: %.2lf %lu, %lu\n", (double)invalid_number/(invalid_number+valid_number), invalid_number, valid_number);
+//	printf("iv/total ratio: %.2lf %lu, %lu\n", (double)invalid_number/(invalid_number+valid_number), invalid_number, valid_number);
 	//printf("\ttarget_run :%u ,now: %u\n", target_run_max, lsm->array[lsm->max-1].now);
 	lsm_monitor.last_run_valid+=valid_number;
 	lsm_monitor.last_run_invalid+=invalid_number;

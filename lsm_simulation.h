@@ -13,6 +13,7 @@
 #define PACK (PAGESIZE/(2*sizeof(uint32_t)))
 
 typedef struct monitor{
+	uint64_t buffer_write;
 	uint64_t level_read_num[100];
 	uint64_t level_write_num[100];
 	uint64_t last_level_merg_run_num[100];
@@ -46,7 +47,7 @@ typedef struct LSM{
 	uint32_t sizefactor;
 	uint32_t level;
 	uint32_t now;
-	uint32_t max;
+	int32_t max;
 	struct level *array;
 	uint32_t last_level_valid;
 	uint64_t *lba_run_id;

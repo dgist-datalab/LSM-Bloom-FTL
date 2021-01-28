@@ -59,8 +59,24 @@ uint32_t get_waf(char t, uint32_t level, uint32_t size_factor){
 			return level;
 		case LEVEL:
 			return level*size_factor;
-		case HYBRID:
+		case HYBRIDTL:
 			return level-1+size_factor;
+		case HYBRIDLT:
+			return (level-1)*size_factor+1;
+	}
+	return UINT32_MAX;
+}
+
+float get_sep_waf(char t, uint32_t level, uint32_t size_factor){
+	switch (t){
+		case TIER:
+			return (float)(level-1)/(PAGESIZE/sizeof(uint32_t))+1+1;
+		case LEVEL:
+			return (float)(level-1)*size_factor/(PAGESIZE/sizeof(uint32_t))+size_factor+1;
+		case HYBRIDTL:
+			return level-1+size_factor;
+		case HYBRIDLT:
+			return (float)(level-1)*size_factor/(PAGESIZE/sizeof(uint32_t))+1+1;
 	}
 	return UINT32_MAX;
 }
@@ -71,8 +87,10 @@ uint32_t get_raf(char t, uint32_t level, uint32_t size_factor){
 			return 	level*size_factor;
 		case LEVEL:
 			return level;
-		case HYBRID:
+		case HYBRIDTL:
 			return (level-1)*size_factor+1;
+		case HYBRIDLT:
+			return size_factor;
 	}
 	return UINT32_MAX;
 }

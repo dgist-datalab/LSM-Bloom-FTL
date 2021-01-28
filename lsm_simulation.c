@@ -143,6 +143,7 @@ int lba_comp(const void *_a, const void *_b){
 int lsm_insert(LSM* lsm, uint32_t lba){
 	lsm->buffer->array[lsm->buffer->now++]=lba;
 	write_cnt++;
+	lsm_monitor.buffer_write++;
 
 	if(!full_check_target(lsm->buffer)) return 1;
 	qsort(lsm->buffer->array, lsm->buffer->now, sizeof(uint32_t), lba_comp);
@@ -164,6 +165,19 @@ int lsm_insert(LSM* lsm, uint32_t lba){
 			lsm_compaction(lsm, i);		
 		}
 		else break;
+	}
+
+	uint64_t temp_sum=lsm_monitor.buffer_write;
+	for(uint32_t i=0; i<=lsm->max; i++){
+		temp_sum+=lsm_monitor.level_write_num[i];
+	}
+
+	if(write_cnt!=temp_sum){
+		printf("buffer write:%lu\n", lsm_monitor.buffer_write);
+		for(uint32_t i=0; i<=lsm->max; i++){
+			printf("[lev:%u] %lu\n",i,lsm_monitor.level_write_num[i]);
+		}	
+		abort();
 	}
 
 	free(lsm->buffer);
@@ -242,8 +256,7 @@ void lsm_free(LSM *lsm, uint64_t t){
 	free(lsm->buffer);
 
 	printf("lev read  write  WAF BF+PIN\n");
-	printf("0  0  %lu  1\n", t);
-
+	printf("0  0  %lu(%lu)  1\n", t, lsm_monitor.buffer_write);
 	for(uint32_t i=0; i<=lsm->max; i++){
 		printf("%u %lu  %lu  %.3lf %.3lf\n", i+1,lsm_monitor.level_read_num[i], lsm_monitor.level_write_num[i], 
 				(double) lsm_monitor.level_write_num[i]/t,
