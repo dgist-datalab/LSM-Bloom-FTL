@@ -108,6 +108,7 @@ void run_insert_value(run *r, uint32_t lba, uint32_t idx, uint64_t *write_monito
 LSM* lsm_init(char t, uint32_t level, uint32_t size_factor, uint32_t blocknum, uint64_t range);
 int lsm_insert(LSM*, uint32_t lba);
 void lsm_print_level(LSM *, uint32_t target_level);
+void lsm_print_shape(LSM *lsm);
 void lsm_print_run(LSM *, uint32_t target_level);
 void lsm_print_summary(run *);
 void lsm_last_compaction(LSM*, level *, uint32_t idx);

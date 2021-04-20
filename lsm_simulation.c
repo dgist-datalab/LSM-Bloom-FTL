@@ -202,6 +202,21 @@ void lsm_print_level(LSM *lsm, uint32_t target_level){
 	}
 }
 
+void lsm_print_shape(LSM *lsm){
+	for(int i=0; i<lsm->level; i++){//level
+		uint32_t block_sum=0;
+		for(int j=0; j<lsm->array[i].max; j++){ //run
+			block_sum+=lsm->array[i].array[j].max;
+			/*
+			for(int k=0; k<lsm->array[i].max; k++){//block
+
+			}
+			*/
+		}
+		printf("[%d] -> max_block %u, max_page %lu\n",i, block_sum, (uint64_t)block_sum*LPPB);
+	}
+}
+
 void lsm_print_run(LSM *lsm, uint32_t target_level){
 	run *now;
 	uint32_t idx=0;

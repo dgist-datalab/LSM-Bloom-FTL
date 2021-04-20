@@ -51,12 +51,15 @@ uint32_t get_best_target_bits(float fpr, uint32_t max_depth){
 	uint32_t bits=0;
 	double range_bits=48.0f*2;
 	uint32_t min=UINT32_MAX;
+	uint32_t result_target_member=0;
 	for(uint32_t i=1; i<=max_depth; i++){
 		target_member*=2;
 		bits=get_number_of_bits(get_target_each_fpr_w_mem(fpr, target_member));
 		if(min>range_bits/target_member+bits){
 			min=range_bits/target_member+bits;
+			result_target_member=target_member;
 		}
 	}
+	printf("target_member:%u\n",result_target_member);
 	return min;
 }

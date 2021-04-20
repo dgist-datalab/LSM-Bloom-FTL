@@ -32,7 +32,8 @@ int main(int argc, char *argv[]){
 	fprintf(stderr, "level:%u size_factor: %u\n", NOL, size_factor);
 	fprintf(stderr, "ratio: %.2lf, OP: %f\n", t, OP);
 	LSM *lsm=lsm_init(TIER, NOL, size_factor, BLOCKNUMBER, range);
-
+	lsm_print_shape(lsm);
+	printf("\n");
 	uint32_t max=0;
 	for(uint64_t i=0; i<range*ROUND; i++){
 		uint32_t target_lba=rand()%range+1;
@@ -40,15 +41,16 @@ int main(int argc, char *argv[]){
 		if(lsm_insert(lsm, target_lba)==-1){
 			break;
 		}
+		/*
 		if((i+1)%10000==0){
 			printf("\r progresee %.2f%%",(float)i/(range*ROUND)*100);
-		}
+		}*/
 	}
 	
 	printf("WAF: %.2lf, %lu, %lu\n", (double)write_cnt/(range*ROUND),write_cnt, range*ROUND);
 	printf("last_compaction_cnt: %lu, max lba:%u\n", last_compaction_cnt,max);
 
-	lsm_print_level(lsm, LEVEL-1);
+	lsm_print_level(lsm, NOL-1);
 	
 	lsm_free(lsm, range*ROUND);
 	return 0;
